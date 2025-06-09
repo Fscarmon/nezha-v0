@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 env:
-  NEZHA_VERSION: '0.17.9' # <-- 在这里设置固定的程序内置版本
+  NEZHA_VERSION: '0.17.9' # 在这里设置固定的程序内置版本
 
 jobs:
   setup:
@@ -19,7 +19,6 @@ jobs:
     steps:
       - name: Generate release tag
         id: version
-        # 这个步骤生成的是发布用的标签，不是程序版本
         run: echo "version=v$(date +%Y%m%d)-${{ github.run_id }}" >> $GITHUB_OUTPUT
 
   build-freebsd:
@@ -28,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Clone Nezha Source Code
+        run: git clone -b v${{ env.NEZHA_VERSION }} --depth 1 https://github.com/naiba/nezha.git
 
       - name: Setup and Build on FreeBSD
         uses: vmactions/freebsd-vm@v1
@@ -42,8 +44,11 @@ jobs:
           run: |
             export PATH=$PATH:/usr/local/go/bin
             export GOPATH=$HOME/go
-            # 使用 env 中定义的固定版本号来构建程序
             version_num=${{ env.NEZHA_VERSION }}
+            
+            # 进入克隆下来的源代码目录
+            cd nezha
+            
             cd cmd/dashboard
             go mod tidy
             if find ../../ -name "*.go" -exec grep -l "singleton.Version" {} \; | head -1 > /dev/null 2>&1; then VERSION_FLAG="-X github.com/naiba/nezha/service/singleton.Version=${version_num}"; else VERSION_FLAG="-X main.version=${version_num}"; fi
@@ -57,7 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nezha-freebsd-amd64-binary
-          path: output/nezha-dashboard-freebsd-amd64
+          path: nezha/output/nezha-dashboard-freebsd-amd64
 
   build-linux:
     name: Build Linux
@@ -71,10 +76,17 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.22.0'
+      
+      - name: Clone Nezha Source Code
+        run: git clone -b v${{ env.NEZHA_VERSION }} --depth 1 https://github.com/naiba/nezha.git
+
       - name: Build Application
         run: |
-          # 使用 env 中定义的固定版本号来构建程序
           version_num=${{ env.NEZHA_VERSION }}
+
+          # 进入克隆下来的源代码目录
+          cd nezha
+
           cd cmd/dashboard
           go mod tidy
           export GOOS=linux
@@ -89,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nezha-linux-${{ matrix.arch }}-binary
-          path: output/nezha-dashboard-linux-${{ matrix.arch }}
+          path: nezha/output/nezha-dashboard-linux-${{ matrix.arch }}
 
   build-ibm-s390x:
     name: Build IBM s390x
@@ -100,10 +112,17 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.22.0'
+
+      - name: Clone Nezha Source Code
+        run: git clone -b v${{ env.NEZHA_VERSION }} --depth 1 https://github.com/naiba/nezha.git
+
       - name: Build for IBM s390x
         run: |
-          # 使用 env 中定义的固定版本号来构建程序
           version_num=${{ env.NEZHA_VERSION }}
+          
+          # 进入克隆下来的源代码目录
+          cd nezha
+
           cd cmd/dashboard
           go mod tidy
           export GOOS=linux
@@ -118,7 +137,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nezha-linux-s390x-binary
-          path: output/nezha-dashboard-linux-s390x
+          path: nezha/output/nezha-dashboard-linux-s390x
 
   release:
     name: Create Release
@@ -140,7 +159,6 @@ jobs:
       - name: Create Release with Binaries
         uses: ncipollo/release-action@v1
         with:
-          # Release 的标签使用 setup 任务生成的日期标签
           tag: ${{ needs.setup.outputs.version }}
           artifacts: "release-assets/*"
           generateReleaseNotes: true
