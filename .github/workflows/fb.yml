@@ -7,15 +7,19 @@ on:
 permissions:
   contents: write
 
+env:
+  NEZHA_VERSION: '0.17.9' # <-- 在这里设置固定的程序内置版本
+
 jobs:
   setup:
-    name: Determine Version
+    name: Determine Release Tag
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Generate version tag
+      - name: Generate release tag
         id: version
+        # 这个步骤生成的是发布用的标签，不是程序版本
         run: echo "version=v$(date +%Y%m%d)-${{ github.run_id }}" >> $GITHUB_OUTPUT
 
   build-freebsd:
@@ -38,10 +42,8 @@ jobs:
           run: |
             export PATH=$PATH:/usr/local/go/bin
             export GOPATH=$HOME/go
-            VERSION=${{ needs.setup.outputs.version }}
-            version_num=${VERSION#v}
-            # The workflow now builds the code from the repository it is in.
-            # Pre-build steps like frontend and GeoIP can be added here if needed.
+            # 使用 env 中定义的固定版本号来构建程序
+            version_num=${{ env.NEZHA_VERSION }}
             cd cmd/dashboard
             go mod tidy
             if find ../../ -name "*.go" -exec grep -l "singleton.Version" {} \; | head -1 > /dev/null 2>&1; then VERSION_FLAG="-X github.com/naiba/nezha/service/singleton.Version=${version_num}"; else VERSION_FLAG="-X main.version=${version_num}"; fi
@@ -50,9 +52,6 @@ jobs:
             echo "==================== preparing output ========================"
             mkdir -p ../../output
             mv dashboard ../../output/nezha-dashboard-freebsd-amd64
-
-            echo "Final output:"
-            ls -la ../../output
 
       - name: Upload FreeBSD Binary
         uses: actions/upload-artifact@v4
@@ -74,9 +73,8 @@ jobs:
           go-version: '1.22.0'
       - name: Build Application
         run: |
-          VERSION=${{ needs.setup.outputs.version }}
-          version_num=${VERSION#v}
-          # Pre-build steps like frontend and GeoIP can be added here if needed.
+          # 使用 env 中定义的固定版本号来构建程序
+          version_num=${{ env.NEZHA_VERSION }}
           cd cmd/dashboard
           go mod tidy
           export GOOS=linux
@@ -104,9 +102,8 @@ jobs:
           go-version: '1.22.0'
       - name: Build for IBM s390x
         run: |
-          VERSION=${{ needs.setup.outputs.version }}
-          version_num=${VERSION#v}
-          # Pre-build steps like frontend and GeoIP can be added here if needed.
+          # 使用 env 中定义的固定版本号来构建程序
+          version_num=${{ env.NEZHA_VERSION }}
           cd cmd/dashboard
           go mod tidy
           export GOOS=linux
@@ -143,6 +140,7 @@ jobs:
       - name: Create Release with Binaries
         uses: ncipollo/release-action@v1
         with:
+          # Release 的标签使用 setup 任务生成的日期标签
           tag: ${{ needs.setup.outputs.version }}
           artifacts: "release-assets/*"
           generateReleaseNotes: true
