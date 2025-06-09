@@ -152,14 +152,16 @@ jobs:
 
       - name: Clone Nezha
         run: |
-          version_num=${{ steps.version.outputs.version }}
-          version_num=${version_num#v}
-          
+          echo "Cloning Nezha repository..."
           if git ls-remote --tags https://github.com/naiba/nezha | grep -q "refs/tags/${{ steps.version.outputs.version }}"; then
             git clone -b ${{ steps.version.outputs.version }} https://github.com/naiba/nezha
           else
             echo "Error: Tag ${{ steps.version.outputs.version }} not found in naiba/nezha repository" && exit 1
           fi
+          
+          echo "Repository cloned, checking structure..."
+          ls -la nezha/
+          find nezha/ -name "*fetch*" -type f || echo "No fetch scripts found"
 
       - name: Setup Cross Compilation for ARM64
         if: matrix.arch == 'arm64'
@@ -177,28 +179,48 @@ jobs:
         run: |
           version_num=${{ steps.version.outputs.version }}
           version_num=${version_num#v}
+          echo "Building version: ${version_num}"
           
           # Clean old dist directories
           rm -rf nezha/cmd/dashboard/*-dist
           
-          # Fetch frontend dependencies
+          # Fetch frontend dependencies - check if script exists
           cd nezha
-          chmod +x ./script/fetch-frontends.sh && bash ./script/fetch-frontends.sh
+          if [ -f "./script/fetch-frontends.sh" ]; then
+            echo "Found fetch-frontends.sh, executing..."
+            chmod +x ./script/fetch-frontends.sh && bash ./script/fetch-frontends.sh
+          elif [ -f "./scripts/fetch-frontends.sh" ]; then
+            echo "Found fetch-frontends.sh in scripts/, executing..."
+            chmod +x ./scripts/fetch-frontends.sh && bash ./scripts/fetch-frontends.sh
+          else
+            echo "No fetch-frontends.sh found, checking for other frontend setup methods..."
+            # Check if there are already built frontend files
+            if [ -d "./cmd/dashboard/dist" ] || [ -d "./web/dist" ]; then
+              echo "Found existing frontend dist files"
+            else
+              echo "Warning: No frontend build script found and no dist files present"
+            fi
+          fi
           cd ../
           
-          # Download GeoIP database
-          rm -rf nezha/pkg/geoip/geoip.db
+          # Download GeoIP database - ensure directory exists
+          mkdir -p nezha/pkg/geoip
+          rm -f nezha/pkg/geoip/geoip.db
+          echo "Downloading GeoIP database..."
           wget -qO nezha/pkg/geoip/geoip.db https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}
           
           # Install Swag
+          echo "Installing Swag..."
           go install github.com/swaggo/swag/cmd/swag@latest
           
           # Generate Swagger docs
+          echo "Generating Swagger docs..."
           cd nezha
           $(go env GOPATH)/bin/swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
           
           # Build the project
           cd cmd/dashboard
+          echo "Building Go application..."
           go mod tidy
           
           export GOOS=linux
@@ -288,28 +310,48 @@ jobs:
         run: |
           version_num=${{ steps.version.outputs.version }}
           version_num=${version_num#v}
+          echo "Building version: ${version_num}"
           
           # Clean old dist directories
           rm -rf nezha/cmd/dashboard/*-dist
           
-          # Fetch frontend dependencies
+          # Fetch frontend dependencies - check if script exists
           cd nezha
-          chmod +x ./script/fetch-frontends.sh && bash ./script/fetch-frontends.sh
+          if [ -f "./script/fetch-frontends.sh" ]; then
+            echo "Found fetch-frontends.sh, executing..."
+            chmod +x ./script/fetch-frontends.sh && bash ./script/fetch-frontends.sh
+          elif [ -f "./scripts/fetch-frontends.sh" ]; then
+            echo "Found fetch-frontends.sh in scripts/, executing..."
+            chmod +x ./scripts/fetch-frontends.sh && bash ./scripts/fetch-frontends.sh
+          else
+            echo "No fetch-frontends.sh found, checking for other frontend setup methods..."
+            # Check if there are already built frontend files
+            if [ -d "./cmd/dashboard/dist" ] || [ -d "./web/dist" ]; then
+              echo "Found existing frontend dist files"
+            else
+              echo "Warning: No frontend build script found and no dist files present"
+            fi
+          fi
           cd ../
           
-          # Download GeoIP database
-          rm -rf nezha/pkg/geoip/geoip.db
+          # Download GeoIP database - ensure directory exists
+          mkdir -p nezha/pkg/geoip
+          rm -f nezha/pkg/geoip/geoip.db
+          echo "Downloading GeoIP database..."
           wget -qO nezha/pkg/geoip/geoip.db https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}
           
           # Install Swag
+          echo "Installing Swag..."
           go install github.com/swaggo/swag/cmd/swag@latest
           
           # Generate Swagger docs
+          echo "Generating Swagger docs..."
           cd nezha
           $(go env GOPATH)/bin/swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
           
           # Build for IBM s390x (System z / LinuxONE)
           cd cmd/dashboard
+          echo "Building Go application for s390x..."
           go mod tidy
           
           # IBM Z/LinuxONE 使用 s390x 架构
