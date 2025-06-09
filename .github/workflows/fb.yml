@@ -179,6 +179,6 @@ jobs:
           tag: ${{ steps.version.outputs.version }}
           artifacts: "release-assets/*" # <--- 此处无需修改，它会自动上传目录下的所有文件
           generateReleaseNotes: true
-          makeLatest: legacy
+          allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
