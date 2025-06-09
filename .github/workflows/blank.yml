@@ -163,17 +163,10 @@ jobs:
           ls -la nezha/
           find nezha/ -name "*fetch*" -type f || echo "No fetch scripts found"
 
-      - name: Setup Cross Compilation for ARM64
-        if: matrix.arch == 'arm64'
+      - name: Setup Cross Compilation
         run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "CGO_ENABLED=1" >> $GITHUB_ENV
-
-      - name: Setup Compilation for AMD64
-        if: matrix.arch == 'amd64'
-        run: |
-          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          # 对所有架构都使用静态编译，避免交叉编译复杂性
+          echo "CGO_ENABLED=0" >> $GITHUB_ENV
 
       - name: Build Application
         run: |
@@ -220,11 +213,12 @@ jobs:
           
           # Build the project
           cd cmd/dashboard
-          echo "Building Go application..."
+          echo "Building Go application for ${{ matrix.arch }}..."
           go mod tidy
           
           export GOOS=linux
           export GOARCH=${{ matrix.arch }}
+          # CGO_ENABLED=0 已在环境变量中设置
           
           go build -ldflags "-s -w -X github.com/nezhahq/nezha/service/singleton.Version=${version_num}" -trimpath -buildvcs=false
           
