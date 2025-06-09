@@ -24,14 +24,39 @@ jobs:
           usesh: true
           release: 14.1
           prepare: |
+            pkg update
             pkg install -y wget curl git gcc bash jq node zip
+            
+            # 下载并安装 Go
             fetch https://go.dev/dl/go1.22.0.freebsd-amd64.tar.gz
             rm -rf /usr/local/go
             tar -C /usr/local -xzf go1.22.0.freebsd-amd64.tar.gz
-            export PATH=$PATH:/usr/local/go/bin
+            
+            # 设置 Go 环境变量
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+            echo 'export GOPATH=$HOME/go' >> ~/.bashrc
+            echo 'export PATH=$PATH:$GOPATH/bin' >> ~/.bashrc
+            
+            # 安装 yq
             curl -sL https://github.com/mikefarah/yq/releases/latest/download/yq_freebsd_amd64 -o /usr/local/bin/yq
             chmod +x /usr/local/bin/yq
+            
+            # 验证安装
+            /usr/local/go/bin/go version
+            /usr/local/bin/yq --version
           run: |
+            # 设置环境变量
+            export PATH=$PATH:/usr/local/go/bin
+            export GOPATH=$HOME/go
+            export PATH=$PATH:$GOPATH/bin
+            
+            echo "==================== 0 Environment Check ========================"
+            echo "PATH: $PATH"
+            which go || echo "Go not found in PATH"
+            go version || echo "Go version failed"
+            pwd
+            ls -la
+            
             echo "==================== 1 get nezha version ========================"
             if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
               VERSION=${{ github.event.inputs.tag }}
@@ -44,10 +69,10 @@ jobs:
               exit 1
             fi
 
-            echo "VERSION=${VERSION}" >> $GITHUB_ENV
-            echo "Version set to: ${VERSION}"
-
+            echo "VERSION=${VERSION}"
             version_num=${VERSION#v}
+            echo "Version number: ${version_num}"
+
             echo "==================== 2 download nezha git ========================"
             # v0版本使用原始的naiba/nezha仓库
             if git ls-remote --tags https://github.com/naiba/nezha | grep -q "refs/tags/${VERSION}"; then
@@ -56,54 +81,94 @@ jobs:
               echo "Error: Tag ${VERSION} not found in naiba/nezha repository" && exit 1
             fi
             
+            echo "Repository structure:"
+            ls -la nezha/
+            
             echo "==================== 3 handle frontend (v0 compatible) ========================"
             cd nezha
             # v0版本可能不需要fetch-frontends.sh，或者前端已经包含在仓库中
             if [ -f "./script/fetch-frontends.sh" ]; then
+              echo "Found fetch-frontends.sh in script/"
               chmod +x ./script/fetch-frontends.sh && bash ./script/fetch-frontends.sh
             elif [ -f "./scripts/fetch-frontends.sh" ]; then
+              echo "Found fetch-frontends.sh in scripts/"
               chmod +x ./scripts/fetch-frontends.sh && bash ./scripts/fetch-frontends.sh
             else
-              echo "No frontend fetch script found, assuming frontend is already included or not needed"
+              echo "No frontend fetch script found, checking for existing frontend files..."
+              find . -name "*dist*" -type d || echo "No dist directories found"
+              find . -name "*.html" | head -5 || echo "No HTML files found"
             fi
-            cd ../
+            cd ..
             
             # GeoIP数据库处理 - v0可能路径不同
+            echo "==================== 4 handle GeoIP database ========================"
             if [ -d "nezha/pkg/geoip" ]; then
-              rm -rf nezha/pkg/geoip/geoip.db
-              wget -qO nezha/pkg/geoip/geoip.db https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}
+              echo "Found pkg/geoip directory"
+              rm -f nezha/pkg/geoip/geoip.db
+              wget -qO nezha/pkg/geoip/geoip.db "https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}" || echo "GeoIP download failed"
             elif [ -d "nezha/resource" ]; then
-              # v0可能使用resource目录
+              echo "Found resource directory"
               mkdir -p nezha/resource
-              wget -qO nezha/resource/geoip.db https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}
+              wget -qO nezha/resource/geoip.db "https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}" || echo "GeoIP download failed"
+            else
+              echo "No GeoIP directory found, creating pkg/geoip"
+              mkdir -p nezha/pkg/geoip
+              wget -qO nezha/pkg/geoip/geoip.db "https://ipinfo.io/data/free/country.mmdb?token=${{ secrets.IPINFO_TOKEN }}" || echo "GeoIP download failed"
             fi
             
-            echo "==================== 4 Install Swag (if needed) ========================"
+            echo "==================== 5 Install Swag (if needed) ========================"
             cd nezha
             # 检查是否需要Swagger文档生成
-            if grep -r "swag" . > /dev/null 2>&1; then
-              go install github.com/swaggo/swag/cmd/swag@latest
-              export PATH=$PATH:$(go env GOPATH)/bin
-              $(go env GOPATH)/bin/swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false || echo "Swag init failed or not needed"
+            if find . -name "*.go" -exec grep -l "swag" {} \; | head -1 > /dev/null 2>&1; then
+              echo "Found swag references, installing swag..."
+              go install github.com/swaggo/swag/cmd/swag@latest || echo "Swag install failed"
+              if [ -f "$GOPATH/bin/swag" ]; then
+                $GOPATH/bin/swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false || echo "Swag init failed"
+              fi
+            else
+              echo "No swag references found, skipping swagger generation"
             fi
             
-            echo "==================== 5 go build ========================"
+            echo "==================== 6 go build ========================"
             cd cmd/dashboard
-            go mod tidy
+            
+            echo "Current directory: $(pwd)"
+            echo "Go mod files:"
+            find . -name "go.mod" -exec cat {} \;
+            
+            go mod tidy || echo "go mod tidy failed"
             
             # v0版本的ldflags可能不同
-            if grep -q "singleton.Version" ../../service/singleton/*.go 2>/dev/null; then
-              # v1风格的版本设置
-              go build -ldflags "-s -w -X github.com/naiba/nezha/service/singleton.Version=${version_num} -extldflags '-static -fpic'" -trimpath -buildvcs=false
+            echo "Checking version injection patterns..."
+            if find ../../ -name "*.go" -exec grep -l "singleton.Version" {} \; | head -1 > /dev/null 2>&1; then
+              echo "Found singleton.Version pattern"
+              VERSION_FLAG="-X github.com/naiba/nezha/service/singleton.Version=${version_num}"
+            elif find ../../ -name "*.go" -exec grep -l "main.version" {} \; | head -1 > /dev/null 2>&1; then
+              echo "Found main.version pattern"
+              VERSION_FLAG="-X main.version=${version_num}"
             else
-              # v0可能使用不同的版本设置方式
-              go build -ldflags "-s -w -X main.version=${version_num} -extldflags '-static -fpic'" -trimpath -buildvcs=false
+              echo "No version pattern found, using default"
+              VERSION_FLAG="-X main.version=${version_num}"
             fi
-
-            echo "==================== 6 check output file ========================"
-            file dashboard
             
-            echo "==================== 7 output archive ========================"
+            echo "Building with version flag: $VERSION_FLAG"
+            go build -ldflags "-s -w $VERSION_FLAG -extldflags '-static -fpic'" -trimpath -buildvcs=false || {
+              echo "Build failed, trying without static flags..."
+              go build -ldflags "-s -w $VERSION_FLAG" -trimpath -buildvcs=false
+            }
+
+            echo "==================== 7 check output file ========================"
+            if [ -f "dashboard" ]; then
+              echo "Build successful!"
+              file dashboard
+              ls -la dashboard
+            else
+              echo "Build failed - no dashboard binary found"
+              ls -la
+              exit 1
+            fi
+            
+            echo "==================== 8 output archive ========================"
             mkdir -p ../../output
             mv dashboard ../../output/nezha-dashboard-freebsd-amd64
 
@@ -111,13 +176,20 @@ jobs:
             # v0配置文件可能不同
             if wget -q --spider "https://raw.githubusercontent.com/naiba/nezha/master/script/config.yaml"; then
               wget -qO ../../output/data/config.yaml "https://raw.githubusercontent.com/naiba/nezha/master/script/config.yaml"
+            elif wget -q --spider "https://raw.githubusercontent.com/nezhahq/scripts/main/extras/config.yaml"; then
+              wget -qO ../../output/data/config.yaml "https://raw.githubusercontent.com/nezhahq/scripts/main/extras/config.yaml"
             else
-              wget -qO ../../output/data/config.yaml "https://raw.githubusercontent.com/nezhahq/scripts/main/extras/config.yaml" || echo "# Nezha Config" > ../../output/data/config.yaml
+              echo "# Nezha Dashboard Configuration" > ../../output/data/config.yaml
+              echo "debug: false" >> ../../output/data/config.yaml
             fi
 
             cd ../../output
-            zip -qr nezha-dashboard-freebsd-amd64.zip .
-            tar -czf nezha-dashboard-freebsd-amd64.tar.gz *
+            echo "Creating archives..."
+            zip -qr nezha-dashboard-freebsd-amd64.zip . || echo "zip failed"
+            tar -czf nezha-dashboard-freebsd-amd64.tar.gz * || echo "tar failed"
+            
+            echo "Final output:"
+            ls -la
 
       - name: Upload FreeBSD Artifact
         uses: actions/upload-artifact@v4
