@@ -10,6 +10,9 @@ on:
         required: true
         default: 'v0.17.5'
 
+permissions:
+  contents: write  # 允许创建release
+  
 jobs:
   # FreeBSD Build (适配v0)
   build-freebsd:
